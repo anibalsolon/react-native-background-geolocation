@@ -1,6 +1,17 @@
 package com.marianhello.bgloc.react;
 
+import android.app.AlertDialog;
+import android.content.ComponentName;
 import android.content.Context;
+import android.content.DialogInterface;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
+import android.os.Handler;
+import android.os.Looper;
+import android.provider.Settings;
+import android.util.Log;
 
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.Callback;
@@ -26,6 +37,9 @@ import com.marianhello.logging.LoggerManager;
 import org.json.JSONException;
 
 import java.util.Collection;
+import java.util.List;
+
+import static android.content.Context.MODE_PRIVATE;
 
 public class BackgroundGeolocationModule extends ReactContextBaseJavaModule implements LifecycleEventListener, PluginDelegate {
 
@@ -43,10 +57,14 @@ public class BackgroundGeolocationModule extends ReactContextBaseJavaModule impl
     public static final String HTTP_AUTHORIZATION_EVENT = "http_authorization";
     public static final String ERROR_EVENT = "error";
 
+    public static final String MY_PREFS_NAME = "MyPrefsFile";
+    public static final String IS_AUTO_START_ENABLED = "isAutoStartEnabled";
+
     private static final int PERMISSIONS_REQUEST_CODE = 1;
 
     private BackgroundGeolocationFacade facade;
     private org.slf4j.Logger logger;
+    ReactApplicationContext mContext;
 
     public static class ErrorMap {
         public static ReadableMap from(String message, int code) {
@@ -85,7 +103,7 @@ public class BackgroundGeolocationModule extends ReactContextBaseJavaModule impl
     public BackgroundGeolocationModule(ReactApplicationContext reactContext) {
         super(reactContext);
         reactContext.addLifecycleEventListener(this);
-
+        mContext = reactContext;
         facade = new BackgroundGeolocationFacade(getContext(), this);
         logger = LoggerManager.getLogger(BackgroundGeolocationModule.class);
     }
@@ -150,6 +168,12 @@ public class BackgroundGeolocationModule extends ReactContextBaseJavaModule impl
 
     @ReactMethod
     public void configure(final ReadableMap options, final Callback success, final Callback error) {
+        String autoStartTitle = options.getString("enableAutoStartDialogueTitle");
+        String autoStartText = options.getString("enableAutoStartDialogueText");
+        String locationTitle = options.getString("enableLocationDialogueTitle");
+        String locationText = options.getString("enableLocationDialogueText");
+
+        checkGPSPermission(autoStartTitle, autoStartText, locationTitle, locationText);
         runOnBackgroundThread(new Runnable() {
             @Override
             public void run() {
@@ -401,4 +425,113 @@ public class BackgroundGeolocationModule extends ReactContextBaseJavaModule impl
     public void onHttpAuthorization() {
         sendEvent(HTTP_AUTHORIZATION_EVENT, null);
     }
+
+    public void showSettingsAlert(final String locationDialogueTitle, final String locationDialogueText) {
+
+
+        new Handler(Looper.getMainLooper()).post(new Runnable() {
+            @Override
+            public void run() {
+
+                AlertDialog.Builder alertDialog = new AlertDialog.Builder(getCurrentActivity());
+
+                // Setting Dialog Title
+                alertDialog.setTitle(locationDialogueTitle);
+                // Setting Dialog Message
+                alertDialog.setMessage(locationDialogueText);
+                alertDialog.setCancelable(false);
+
+                // On pressing Settings button
+                alertDialog.setPositiveButton(android.R.string.ok, new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface dialog, int which) {
+                        Intent intent = new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS);
+                        getCurrentActivity().startActivity(intent);
+                    }
+                });
+
+                // Showing Alert Message
+                alertDialog.show();
+            }
+        });
+    }
+
+    private void checkGPSPermission(String autoStartDialogueTitle, String autoStartDialogueText, String locationDialogueTitle, String locationDialogueText) {
+
+        android.location.LocationManager locationManager = (android.location.LocationManager) mContext.getSystemService(Context.LOCATION_SERVICE);
+        boolean gpsStatus = locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER);
+        Log.e("gpsStatus", gpsStatus + "");
+
+        if (!gpsStatus) {
+            showSettingsAlert(locationDialogueTitle, locationDialogueText);
+        }
+
+        SharedPreferences pref = mContext.getSharedPreferences(MY_PREFS_NAME, MODE_PRIVATE);
+        boolean isAutoStartEnabled=pref.getBoolean(IS_AUTO_START_ENABLED, false);
+
+        Log.e("isAutoStartEnabled===", isAutoStartEnabled + "");
+
+        if(!isAutoStartEnabled) {
+            addAutoStartup(autoStartDialogueTitle, autoStartDialogueText);
+        }
+    }
+
+    private void addAutoStartup(final String autoStartDialogueTitle, final String autoStartDialogueText) {
+
+        try {
+            final Intent intent = new Intent();
+            String manufacturer = android.os.Build.MANUFACTURER;
+            if ("xiaomi".equalsIgnoreCase(manufacturer)) {
+                intent.setComponent(new ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"));
+            } else if ("oppo".equalsIgnoreCase(manufacturer)) {
+                intent.setComponent(new ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity"));
+            } else if ("vivo".equalsIgnoreCase(manufacturer)) {
+                intent.setComponent(new ComponentName("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"));
+            } else if ("Letv".equalsIgnoreCase(manufacturer)) {
+                intent.setComponent(new ComponentName("com.letv.android.letvsafe", "com.letv.android.letvsafe.AutobootManageActivity"));
+            } else if ("Honor".equalsIgnoreCase(manufacturer)) {
+                intent.setComponent(new ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.optimize.process.ProtectActivity"));
+            }
+
+            List<ResolveInfo> list = getCurrentActivity().getPackageManager().queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY);
+             if  (list.size() > 0) {
+                new Handler(Looper.getMainLooper()).post(new Runnable() {
+                    @Override
+                    public void run() {
+
+                        AlertDialog.Builder alertDialog = new AlertDialog.Builder(getCurrentActivity());
+
+                        // Setting Dialog Title
+                        alertDialog.setTitle(autoStartDialogueTitle);
+                        // Setting Dialog Message
+                        alertDialog.setMessage(autoStartDialogueText);
+                        alertDialog.setCancelable(false);
+
+                        // On pressing Settings button
+                        alertDialog.setPositiveButton(android.R.string.ok, new DialogInterface.OnClickListener() {
+                            public void onClick(DialogInterface dialog, int which) {
+
+                                SharedPreferences.Editor editor = mContext.getSharedPreferences(MY_PREFS_NAME, MODE_PRIVATE).edit();
+                                editor.putBoolean(IS_AUTO_START_ENABLED, true);
+                                editor.apply();
+
+                                getCurrentActivity().startActivity(intent);
+                            }
+                        });
+
+                        alertDialog.setNegativeButton(android.R.string.cancel, new DialogInterface.OnClickListener() {
+                            public void onClick(DialogInterface dialog, int which) {
+                                dialog.cancel();
+                            }
+                        });
+
+                        // Showing Alert Message
+                        alertDialog.show();
+                    }
+                });
+            }
+        } catch (Exception e) {
+            Log.e("exc" , String.valueOf(e));
+        }
+    }
+
 }
